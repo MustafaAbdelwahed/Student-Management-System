@@ -1,7 +1,12 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using CompanySystem.Models;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using StudentManagement.DTO;
+using StudentManagement.Data;
+using StudentManagement.DTO.EnrollmentCreateDto;
+using StudentManagement.DTO.EnrollmentDtos;
+using StudentManagement.DTO.EnrollmentGetDataDto;
 using StudentManagement.Model;
 
 namespace StudentManagement.Controllers
@@ -10,38 +15,41 @@ namespace StudentManagement.Controllers
     [ApiController]
     public class EnrollmentController : ControllerBase
     {
-        private readonly MDBcontext _dbcontext;
-        public EnrollmentController(MDBcontext mDBcontext)
+        private readonly AppDbContext _dbcontext;
+        public EnrollmentController(AppDbContext mDBcontext)
         {
             _dbcontext = mDBcontext;
         }
-    // GET api/enrollments
-    [HttpGet]
-    public IActionResult GetAllEnrollments()
+        // GET api/enrollments
+        [Authorize(Roles = $"{Roles.Admin},{Roles.Teacher}")]
+        [HttpGet]
+        public async Task<IActionResult> GetAllEnrollments()
         {
- 
-            List<EnrollmentGetDataDto> enrollments = _dbcontext.enrollments.Select(e => new EnrollmentGetDataDto
+
+            List<EnrollmentGetDataDto> enrollments = await _dbcontext.enrollments.Select(e => new EnrollmentGetDataDto
             {
                 StudentId = e.StudentId,
                 StudentName = e.Student.FullName,
                 CourseId = e.CourseId,
                 Grade = e.Grade,
                 CourseTitle = e.Course.Title,
-                classe=e.Course.classe,
-                teacher=e.Course.teacher
+                classe = e.Course.Classe,
+                teacher = e.Course.Teacher
             })
-           
-            .ToList();
-          
+
+            .ToListAsync    ();
+
             return Ok(enrollments);
         }
 
         // GET api/enrollments/student/5/course/3
-        [HttpGet("student/{studentId}/course/{courseId}")]
-        public IActionResult GetEnrollment(int studentId, int courseId)
-        { 
+        [Authorize(Roles = $"{Roles.Admin},{Roles.Teacher}")]
 
-            EnrollmentGetDataDto ? enrollment = _dbcontext.enrollments
+        [HttpGet("student/{studentId}/course/{courseId}")]
+        public async Task<IActionResult> GetEnrollment(string studentId, int courseId)
+        {
+
+            EnrollmentGetDataDto? enrollment = await _dbcontext.enrollments
          .Include(e => e.Course).Include(e => e.Student)
          .Select(e => new EnrollmentGetDataDto
          {
@@ -50,58 +58,62 @@ namespace StudentManagement.Controllers
              CourseId = e.CourseId,
              CourseTitle = e.Course.Title,
              Grade = e.Grade,
-             teacher = e.Course.teacher,
-             classe = e.Course.classe
+             teacher = e.Course.Teacher,
+             classe = e.Course.Classe
          })
-         .FirstOrDefault(e => e.CourseId == courseId && e.StudentId == studentId);
+         .FirstOrDefaultAsync(e => e.CourseId == courseId && e.StudentId == studentId);
 
             if (enrollment == null)
             {
                 return NotFound();
             }
 
-          
+
 
             return Ok(enrollment);
         }
 
         // GET api/enrollments/student/5  -> all courses of a student
+
+        [Authorize(Roles = $"{Roles.Admin},{Roles.Teacher}")]
         [HttpGet("student/{studentId}")]
-        public IActionResult GetEnrollmentsByStudent(int studentId)
+        public async Task<IActionResult> GetEnrollmentsByStudent(string studentId)
         {
-            if (!_dbcontext.Students.Any(s => s.Id == studentId))
+            if (!await _dbcontext.Students.AnyAsync(s => s.Id == studentId))
             {
                 return NotFound("Student not found.");
             }
 
-            List<EnrollmentGetDataDto> enrollments = _dbcontext.enrollments
+            List<EnrollmentGetDataDto> enrollments = await  _dbcontext.enrollments
                 .Include(e => e.Course).Include(e => e.Student)
                 .Where(e => e.StudentId == studentId)
                 .Select(e => new EnrollmentGetDataDto
                 {
-                    StudentId=  e.StudentId,
+                    StudentId = e.StudentId,
                     StudentName = e.Student.FullName,
                     CourseId = e.CourseId,
                     CourseTitle = e.Course.Title,
-                  Grade=e.Grade,
-                    teacher = e.Course.teacher,
-                    classe = e.Course.classe
+                    Grade = e.Grade,
+                    teacher = e.Course.Teacher,
+                    classe = e.Course.Classe
                 })
-                .ToList();
+                .ToListAsync();
 
             return Ok(enrollments);
         }
 
         // GET api/enrollments/course/3  -> all students in a course
+
+        [Authorize(Roles = $"{Roles.Admin},{Roles.Teacher}")]
         [HttpGet("course/{courseId}")]
-        public IActionResult GetEnrollmentsByCourse(int courseId)
+        public async Task<IActionResult> GetEnrollmentsByCourse(int courseId)
         {
-            if (!_dbcontext.Courses.Any(c => c.Id == courseId))
+            if (! await   _dbcontext.Courses.AnyAsync(c => c.Id == courseId))
             {
                 return NotFound("Course not found.");
             }
 
-            List<EnrollmentGetDataDto> enrollments = _dbcontext.enrollments
+            List<EnrollmentGetDataDto> enrollments =await _dbcontext.enrollments
               .Include(e => e.Course).Include(e => e.Student)
               .Where(e => e.CourseId == courseId)
               .Select(e => new EnrollmentGetDataDto
@@ -110,78 +122,76 @@ namespace StudentManagement.Controllers
                   StudentName = e.Student.FullName,
                   CourseId = e.CourseId,
                   CourseTitle = e.Course.Title,
-                  Grade=e.Grade,
-                  teacher = e.Course.teacher,
-                  classe = e.Course.classe
+                  Grade = e.Grade,
+                  teacher = e.Course.Teacher,
+                  classe = e.Course.Classe
               })
-              .ToList();
-           
+              .ToListAsync();
+
 
             return Ok(enrollments);
         }
 
         // POST api/enrollments
+
+        [Authorize(Roles = $"{Roles.Admin},{Roles.Teacher}")]
         [HttpPost]
-        public IActionResult AddEnrollment(EnrollmentCreateDto dto)
+        public async Task<IActionResult> AddEnrollment( EnrollmentCreateDto dto)
         {
 
-            if (!_dbcontext.Students.Any(s => s.Id == dto.StudentId))
+            if (!await _dbcontext.Students.AnyAsync(s => s.Id == dto.StudentId))
             {
                 return NotFound("Student not found.");
             }
 
-            if (!_dbcontext.Courses.Any(c => c.Id == dto.CourseId))
+            if (!await _dbcontext.Courses.AnyAsync(c => c.Id == dto.CourseId))
             {
                 return NotFound("Course not found.");
             }
 
-            bool alreadyEnrolled = _dbcontext.enrollments
-                .Any(e => e.StudentId == dto.StudentId && e.CourseId == dto.CourseId);
+            bool alreadyEnrolled = await _dbcontext.enrollments
+                .AnyAsync(e => e.StudentId == dto.StudentId && e.CourseId == dto.CourseId);
 
             if (alreadyEnrolled)
             {
                 return Conflict("Student is already enrolled in this course.");
             }
-
             Enrollment enrollment = new Enrollment
             {
                 StudentId = dto.StudentId,
                 CourseId = dto.CourseId,
                 CreateAt = DateTime.UtcNow
             };
+            DisplayOutpot? displayOutpot = await _dbcontext.enrollments.Include(e => e.Course)
 
-            _dbcontext.enrollments.Add(enrollment);
-            _dbcontext.SaveChanges();
+                                         .Include(e => e.Student).Select(e => new DisplayOutpot
+                                         {
+                                             StudentId = dto.StudentId,
+                                             CourseId = dto.CourseId,
+                                             CourseTitile =e.Course.Title,
+                                             StudentName=e.Student.FullName
+            }).FirstOrDefaultAsync(e => e.StudentId == dto.StudentId && e.CourseId == dto.CourseId);
+        
 
-            return CreatedAtAction(
-                nameof(GetEnrollment),
-                new { studentId = enrollment.CourseId, courseId = enrollment.CourseId},
-                enrollment);
+
+            await _dbcontext.enrollments.AddAsync(enrollment);
+            await   _dbcontext.SaveChangesAsync();
+
+            return CreatedAtAction(nameof(GetEnrollment),
+                new { studentId = enrollment.StudentId, courseId = enrollment.CourseId },
+                displayOutpot);
         }
 
-        // PUT api/enrollments/student/5/course/3  -> set the grade
-        [HttpPut("student/{studentId}/course/{courseId}")]
-        public IActionResult UpdateGrade(int studentId, int courseId, EnrollmentGradeDto dto)
-        {
-            Enrollment? enrollment = _dbcontext.enrollments
-                .FirstOrDefault(e => e.StudentId == studentId && e.CourseId == courseId);
+     
 
-            if (enrollment == null)
-            {
-                return NotFound();
-            }
-
-            enrollment.Grade = dto.Grade;
-            _dbcontext.SaveChanges();
-            return NoContent();
-        }
 
         // DELETE api/enrollments/student/5/course/3
+        [Authorize(Roles = $"{Roles.Admin},{Roles.Teacher}")]
         [HttpDelete("student/{studentId}/course/{courseId}")]
-        public IActionResult DeleteEnrollment(int studentId, int courseId)
+        public async Task<IActionResult> DeleteEnrollment(string studentId, int courseId)
         {
-            Enrollment? enrollment = _dbcontext.enrollments
-                .FirstOrDefault(e => e.StudentId == studentId && e.CourseId == courseId);
+            Enrollment? enrollment = await _dbcontext.enrollments
+                .FirstOrDefaultAsync(e => e.StudentId == studentId && e.CourseId == courseId);
 
             if (enrollment == null)
             {
@@ -189,7 +199,7 @@ namespace StudentManagement.Controllers
             }
 
             _dbcontext.enrollments.Remove(enrollment);
-            _dbcontext.SaveChanges();
+            await _dbcontext.SaveChangesAsync();
             return NoContent();
         }
     }

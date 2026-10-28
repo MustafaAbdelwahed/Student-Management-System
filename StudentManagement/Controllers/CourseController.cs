@@ -1,7 +1,12 @@
-﻿using Microsoft.AspNetCore.Http;
+﻿using CompanySystem.Models;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using StudentManagement.DTO;
+using StudentManagement.Data;
+using StudentManagement.DTO.CreateCourseDto;
+using StudentManagement.DTO.GetCourseDto;
+using StudentManagement.DTO.UpdateCourseDto;
 using StudentManagement.Model;
 
 namespace StudentManagement.Controllers
@@ -10,42 +15,48 @@ namespace StudentManagement.Controllers
     [ApiController]
     public class CourseController : ControllerBase
     {
-        private readonly MDBcontext _dbcontext;
-        public CourseController(MDBcontext mDBcontext)
+        private readonly AppDbContext _dbcontext;
+        public CourseController(AppDbContext mDBcontext)
         {
             _dbcontext = mDBcontext;
         }
 
+        [Authorize(Roles = $"{Roles.Admin},{Roles.Teacher}")]
         [HttpGet]
-        public IActionResult GetAllCourses()
+        public async Task<IActionResult> GetAllCourses()
         {
-            List<Course> courses = _dbcontext.Courses.ToList();
+            List<Course> courses =await _dbcontext.Courses.ToListAsync();
             if (courses.Count == 0)
             {
                 return NotFound();
             }
+            List<GetCourseDto> getCourseDtos =await _dbcontext.Courses.Select(c => new GetCourseDto
+            {
+                Id = c.Id,
+                Title = c.Title,
+                Description = c.Description,
+                teacher = c.Teacher,
+                classe = c.Classe
+            }).ToListAsync();
+
             return Ok(courses);
         }
-
+        [Authorize(Roles = $"{Roles.Admin},{Roles.Teacher}")]
         [HttpGet("{id}")]
-        public IActionResult GetCourseById(int id)
+        public async Task<IActionResult> GetCourseById(int id)
         {
-            GetCourseDto? courseDto = _dbcontext.Courses
+            GetCourseDto? courseDto =await _dbcontext.Courses
                 .Where(c => c.Id == id)
                 .Select(c => new GetCourseDto
                 {
-                    CourseId = c.Id,
-                    CourseTitle = c.Title,
+                    Id = c.Id,
+                    Title = c.Title,
                     Description = c.Description,
-                    Credits = c.Credits,
-                    teacher = c.teacher,
-                    classe = c.classe
+                    teacher = c.Teacher,
+                    classe = c.Classe
                 })
-                .FirstOrDefault();
-            //Course? course = _dbcontext.Courses
-            //    .Include(c => c.Enrollments).ThenInclude(e=>e.Student)
-            //    .FirstOrDefault(c => c.Id == id);
-
+                .FirstOrDefaultAsync();
+       
             if (courseDto == null)
             {
                 return NotFound();
@@ -53,53 +64,59 @@ namespace StudentManagement.Controllers
             return Ok(courseDto);
         }
 
+        [Authorize(Roles = $"{Roles.Admin},{Roles.Teacher}")]
         [HttpPost]
-        public IActionResult AddCourse(CreateCourseDto createCourseDto)
+        public async Task<IActionResult> AddCourse(CreateCourseDto createCourseDto)
         {
             Course course = new Course
             {
-                Id = createCourseDto.Id,
                 Title = createCourseDto.Title,
                 Description = createCourseDto.Description,
-                Credits = createCourseDto.Credits,
-                teacher = createCourseDto.teacher,
-                 classe= createCourseDto.classe
+                Teacher = createCourseDto.teacher,
+                Classe = createCourseDto.classe
             };
-            _dbcontext.Courses.Add(course);
-            _dbcontext.SaveChanges();
-            return CreatedAtAction(nameof(GetCourseById), new { id = course.Id }, course);
+            await _dbcontext.Courses.AddAsync(course);
+            await _dbcontext.SaveChangesAsync();
+            return CreatedAtAction(nameof(GetCourseById), new { id = course.Id }, createCourseDto);
         }
 
+        [Authorize(Roles = $"{Roles.Admin}")]
         [HttpPut("{id}")]
-        public IActionResult UpdateCourse(int id, UpdateCourseDto updatedCourse)
+        public async Task<IActionResult> UpdateCourse(int id, UpdateCourseDto updatedCourse)
         {
-            Course? course = _dbcontext.Courses.Find(id);
+            Course? course =await _dbcontext.Courses.FindAsync(id);
             if (course == null)
             {
                 return NotFound();
             }
+            if (!string.IsNullOrWhiteSpace(updatedCourse.Title))
+                course.Title = updatedCourse.Title;
 
-            course.Title = updatedCourse.Title;
-            course.Description = updatedCourse.Description;
-            course.Credits = updatedCourse.Credits;
-            course.teacher = updatedCourse.teacher;
-            course.classe = updatedCourse.classe;
+            if (!string.IsNullOrWhiteSpace(updatedCourse.Description))
+                course.Description = updatedCourse.Description;
 
-            _dbcontext.SaveChanges();
-            return NoContent();
+            if (!string.IsNullOrWhiteSpace(updatedCourse.teacher))
+                course.Teacher = updatedCourse.teacher;
+
+            if (!string.IsNullOrWhiteSpace(updatedCourse.classe))
+                course.Classe = updatedCourse.classe;
+
+            await  _dbcontext.SaveChangesAsync();
+            return Ok(course);
+            //return NoContent();
         }
 
+        [Authorize(Roles = $"{Roles.Admin}")]
         [HttpDelete("{id}")]
-        public IActionResult DeleteCourse(int id)
+        public async Task<IActionResult> DeleteCourse(int id)
         {
-            Course? course = _dbcontext.Courses.Find(id);
+            Course? course =await _dbcontext.Courses.FindAsync(id);
             if (course == null)
             {
                 return NotFound();
             }
-
             _dbcontext.Courses.Remove(course);
-            _dbcontext.SaveChanges();
+            await _dbcontext.SaveChangesAsync();
             return NoContent();
         }
     }

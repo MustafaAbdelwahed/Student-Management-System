@@ -1,8 +1,16 @@
 ﻿
+using CompanySystem.Models;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using StudentManagement.DTO;
+using Microsoft.EntityFrameworkCore.Metadata.Internal;
+using StudentManagement.Data;
+using StudentManagement.DTO.GetAllStudentDto;
+using StudentManagement.DTO.GetStudentByIdDto;
+using StudentManagement.DTO.UpdateStudentDto;
 using StudentManagement.Model;
+using System.Security.Claims;
 
 namespace StudentManagement.Controllers
 {
@@ -10,130 +18,165 @@ namespace StudentManagement.Controllers
     [ApiController]
     public class StudentController : ControllerBase
     {
-        private readonly MDBcontext _dbcontext;
-        public StudentController(MDBcontext mDBcontext)
+        private readonly AppDbContext _dbcontext;
+        private readonly UserManager<AppUser> _userManager;
+        private bool IsAdmin => User.IsInRole(Roles.Admin);
+        public StudentController(AppDbContext mDBcontext, UserManager<AppUser> userManager)
         {
             _dbcontext = mDBcontext;
+            _userManager = userManager;
         }
 
-        [HttpGet]
-        public IActionResult GetAllStudents()
+        //Get All Student
+        [Authorize (Roles = $"{Roles.Admin},{Roles.Teacher}")]
+        [HttpGet("Get All Students")]
+        public async Task<IActionResult> GetAllStudents()
         {
-            List<Student> students = _dbcontext.Students.ToList();
-            if (students.Count == 0)
+            List<GetAllStudentDto> result = await _dbcontext.Students
+                .OrderBy(s => s.FullName)
+                .Select(s => new GetAllStudentDto
+                {
+                    UserId = s.Id,
+                    FullName = s.FullName,
+                    Email = s.Email ?? string.Empty,
+                    CreatedAt = s.CreatedAt
+                })
+                .ToListAsync();
+            if (result.Count==0)
             {
-                return NotFound("Ther is no Student");
+                return BadRequest("Ther is no Student");
             }
-            return Ok(students);
+            return Ok(result); 
         }
 
-        [HttpGet("{id:int}")]
-        public IActionResult GetStudentById(int id)
+        //Get Student By ID
+        [Authorize(Roles =$"{Roles.Admin},{Roles.Teacher}")]
+        [HttpGet("getStudentByID/{id}")]
+        public async Task<IActionResult> GetStudentsById( string id)
         {
-            Student? student = _dbcontext.Students
-                .Include(s => s.Enrollments).ThenInclude(e => e.Course)
-                .FirstOrDefault(s => s.Id == id);
+            Student? student = await  _dbcontext.Students
+              .AsNoTracking()
+              .Include(s => s.Enrollments)
+              .ThenInclude(e => e.Course)
+              .FirstOrDefaultAsync(s => s.Id == id);
 
             if (student == null)
             {
-                return NotFound("Ther is no Student");
+                return BadRequest("Ther is no Student with this ID ");
             }
-            return Ok(student);
-        }
-
-
-
-        [HttpPost]
-        public IActionResult AddStudent(CreateStudentDto createStudentDto)
-        {
-            Student student = new Student
+            GetStudentByIdDto result = new GetStudentByIdDto
             {
-                Id = createStudentDto.Id,
-                FullName = createStudentDto.FullName,
-                Email = createStudentDto.Email,
-                Password = createStudentDto.Password,
-                DateOfBirth = createStudentDto.DateOfBirth,
-                CreatedAt = createStudentDto.CreatedAt
+                UserId = student.Id,
+                FullName = student.FullName,
+                Email = student.Email ,
+                CreatedAt=student.CreatedAt,
+                courses = student.Enrollments.Select(e => e.Course.Title).ToList() ?? new List<string>()
             };
-            _dbcontext.Students.Add(student);
-            _dbcontext.SaveChanges();
-            return CreatedAtAction(nameof(GetStudentById), new { id = student.Id }, student);
+            return Ok(result);
         }
 
-
-        [HttpPut("{id}")]
-        public IActionResult UpdateStudent(int id, UpdateStudentDto updatedStudent)
+        [Authorize(Roles = $"{Roles.Student}")]
+        [HttpGet("GetMyData")]
+        public async Task<IActionResult> GetStudentData()
         {
-            Student? student = _dbcontext.Students.Find(id);
+            string? studentId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            
+            Student? student = await _dbcontext.Students
+              .AsNoTracking()
+              .Include(s => s.Enrollments)
+              .ThenInclude(e => e.Course)
+              .FirstOrDefaultAsync(s => s.Id == studentId);
+
             if (student == null)
             {
-                return NotFound("Ther is no Student whit this id");
+                return BadRequest("Ther is no Student with this ID ");
             }
-            UpdateStudentDto updateStudent = new UpdateStudentDto();
+            GetStudentByIdDto result = new GetStudentByIdDto
+            {
+                UserId = student.Id,
+                FullName = student.FullName,
+                Email = student.Email,
+                CreatedAt = student.CreatedAt,
+                courses = student.Enrollments.Select(e => e.Course.Title).ToList() ?? new List<string>()
+            };
+            return Ok(result);
+        }
 
-            student.FullName = updatedStudent.FullName;
-            student.Email = updatedStudent.Email;
-            student.DateOfBirth = updatedStudent.DateOfBirth;
+        // Admin: any student. Student: only their own.
+        [Authorize(Roles = $"{Roles.Admin}")]
+        [HttpPut("{id}")]
+        public async Task<IActionResult> EditStudent(string id, EditStudentDto dto)
+        {
 
+            if (!IsAdmin && id != User.FindFirstValue(ClaimTypes.NameIdentifier))
+                return Forbid();
 
-            _dbcontext.SaveChanges();
+            Student? student = await _dbcontext.Students.FirstOrDefaultAsync(s => s.Id == id);
+            if (student is null)
+                return NotFound("There is no Student with this id");
+
+            AppUser? user = await _userManager.FindByIdAsync(id);
+            if (user is null)
+                return NotFound("LoginUser account not found");
+
+            // the new email must not belong to someone else
+            AppUser? emailOwner = await _userManager.FindByEmailAsync(dto.Email);
+
+            if (emailOwner is not null && emailOwner.Id != id)
+                return Conflict(new { message = "This email is already used by another account." });
+
+            await using var tx = await _dbcontext.Database.BeginTransactionAsync();
+
+            // 1. login account (we use the email as the username, so update both)
+            user.FullName = dto.FullName;
+
+            if (!string.IsNullOrWhiteSpace(dto.Email))
+            {
+                 await _userManager.SetEmailAsync(user, dto.Email);
+                 await _userManager.SetUserNameAsync(user, dto.Email);
+                 student.Email = dto.Email;
+            }
+            else
+            await _userManager.UpdateAsync(user);
+
+            student.FullName = string.IsNullOrWhiteSpace(dto.FullName) ? student.FullName: dto.FullName;
+            await _dbcontext.SaveChangesAsync();
+            await tx.CommitAsync();
+            //return Ok(dto);
             return NoContent();
         }
 
+        //Delete Student
+        [Authorize(Roles = $"{Roles.Admin}")]
         [HttpDelete("{id}")]
-        public IActionResult DeleteStudent(int id)
+        public async Task<IActionResult> DeleteStudent(string id)
         {
+            if (!IsAdmin && id != User.FindFirstValue(ClaimTypes.NameIdentifier))
+                return Forbid();
+
             Student? student = _dbcontext.Students.Find(id);
             if (student == null)
-            {
-                return NotFound("Ther is no Student whit this id");
-            }
+                return NotFound(new { message = "Ther is no Student whit this id" });
+
+            AppUser? user =await _userManager.FindByIdAsync(id);
+
+            if (user != null&& !await _userManager.IsInRoleAsync(user, Roles.Admin)&& await _userManager.IsInRoleAsync(user, Roles.Teacher))
+                return BadRequest(new { message = "  (Admin or Teacher)  account can't be deleted here." });
+
+            await using var tx = await _dbcontext.Database.BeginTransactionAsync();
 
             _dbcontext.Students.Remove(student);
-            _dbcontext.SaveChanges();
+            await _dbcontext.SaveChangesAsync();
+            if (user!=null)
+            {
+                var result = await _userManager.DeleteAsync(user);
+                if (!result.Succeeded)
+                    return BadRequest(result.Errors.Select(e => e.Description));
+            }
+            await tx.CommitAsync();
             return NoContent();
         }
-
-        //// POST api/students/5/courses/3
-        //[HttpPost("{studentId}/courses/{courseId}")]
-        //public IActionResult Enroll(int studentId, int courseId)
-        //{
-        //    bool studentExists = _dbcontext.Students.Any(s => s.Id == studentId);
-        //    bool courseExists = _dbcontext.Courses.Any(c => c.Id == courseId);
-        //    if (!studentExists || !courseExists)
-        //    {
-        //        return NotFound();
-        //    }
-
-        //    bool alreadyEnrolled = _dbcontext.enrollments
-        //        .Any(e => e.StudentId == studentId && e.CourseId == courseId);
-        //    if (alreadyEnrolled)
-        //    {
-        //        return Conflict("Student is already enrolled in this course.");
-        //    }
-
-        //    _dbcontext.enrollments.Add(new Enrollment { StudentId = studentId, CourseId = courseId });
-        //    _dbcontext.SaveChanges();
-        //    return NoContent();
-        //}
-
-        // DELETE api/students/5/courses/3
-        //    [HttpDelete("{studentId}/courses/{courseId}")]
-        //    public IActionResult Unenroll(int studentId, int courseId)
-        //    {
-        //        Enrollment? enrollment = _dbcontext.enrollments
-        //            .FirstOrDefault(e => e.StudentId == studentId && e.CourseId == courseId);
-
-        //        if (enrollment == null)
-        //        {
-        //            return NotFound();
-        //        }
-
-        //        _dbcontext.enrollments.Remove(enrollment);
-        //        _dbcontext.SaveChanges();
-        //        return NoContent();
-        //    }
-        //}
+   
     }
 }
 

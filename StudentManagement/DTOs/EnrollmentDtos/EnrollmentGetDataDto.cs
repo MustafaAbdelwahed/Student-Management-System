@@ -1,12 +1,12 @@
 ﻿using StudentManagement.Model;
 using System.ComponentModel.DataAnnotations;
 
-namespace StudentManagement.DTO
+namespace StudentManagement.DTO.EnrollmentGetDataDto
 {
  
     public class EnrollmentGetDataDto
     {
-        public int StudentId { get; set; }
+        public string? StudentId { get; set; }
 
         [Required, StringLength(150)]
         public string StudentName { get; set; } = string.Empty;
@@ -28,20 +28,8 @@ namespace StudentManagement.DTO
         public decimal? Grade { get; set; }
     }
 
-    public class EnrollmentCreateDto
-    {
-        [Required]
-        public int StudentId { get; set; }
+ 
 
-        [Required]
-        public int CourseId { get; set; }
 
-    }
-
-    public class EnrollmentGradeDto
-    {
-        [Range(0, 100)]
-        public decimal? Grade { get; set; }
-    }
    
 }
